@@ -11,50 +11,61 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestJoker tests the DNS provider for Joker API
-func TestJoker(t *testing.T) {
-	// Mock Joker API server
+func TestJokerProvider(t *testing.T) {
+	var lastForm map[string]string
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
+		assert.Equal(t, http.MethodPost, r.Method)
+
+		err := r.ParseForm()
+		assert.NoError(t, err)
+
+		lastForm = map[string]string{
+			"username": r.FormValue("username"),
+			"password": r.FormValue("password"),
+			"hostname": r.FormValue("hostname"),
+			"type":     r.FormValue("type"),
+			"address":  r.FormValue("address"),
+			"ttl":      r.FormValue("ttl"),
 		}
-		username := r.URL.Query().Get("username")
-		password := r.URL.Query().Get("password")
-		if username != "user" || password != "pass" {
-			t.Errorf("unexpected credentials: %s / %s", username, password)
-		}
+
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	}))
 	defer server.Close()
 
-	// Create the provider
 	provider := &Provider{
 		Username: "user",
 		Password: "pass",
+		Endpoint: server.URL,
+		client:   server.Client(),
 	}
 
-	// Define a concrete implementation of libdns.Record (use libdns.RR)
-	records := []libdns.Record{
-		&libdns.RR{
-			Name:  "test.example.com",
-			Type:  "TXT",
-			Data:  "testing123",
-			TTL:   time.Minute,
-		},
+	record := &libdns.RR{
+		Name: "test.example.com",
+		Type: "TXT",
+		Data: `"testing123"`,
+		TTL:  time.Minute,
 	}
 
-	// Test AppendRecords
+	ctx := context.Background()
+
 	t.Run("AppendRecords", func(t *testing.T) {
-		got, err := provider.AppendRecords(context.Background(), "example.com", records)
-		assert.Nil(t, err)
-		assert.Equal(t, len(records), len(got))
+		_, err := provider.AppendRecords(ctx, "example.com", []libdns.Record{record})
+		assert.NoError(t, err)
+
+		assert.Equal(t, "user", lastForm["username"])
+		assert.Equal(t, "pass", lastForm["password"])
+		assert.Equal(t, "test.example.com", lastForm["hostname"])
+		assert.Equal(t, "TXT", lastForm["type"])
+		assert.Equal(t, "testing123", lastForm["address"]) // quotes stripped
+		assert.Equal(t, "60", lastForm["ttl"])
 	})
 
-	// Test DeleteRecords
 	t.Run("DeleteRecords", func(t *testing.T) {
-		deleted, err := provider.DeleteRecords(context.Background(), "example.com", records)
-		assert.Nil(t, err)
-		assert.Equal(t, len(records), len(deleted))
+		_, err := provider.DeleteRecords(ctx, "example.com", []libdns.Record{record})
+		assert.NoError(t, err)
+
+		assert.Equal(t, "", lastForm["address"])
 	})
 }
