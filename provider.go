@@ -2,7 +2,6 @@ package caddydnsjoker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,10 +10,11 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyfile"
+	"go.uber.org/zap"
+
 	"github.com/libdns/libdns"
 )
-
-const defaultEndpoint = "https://svc.joker.com/nic/replace"
 
 func init() {
 	caddy.RegisterModule(Provider{})
@@ -24,15 +24,16 @@ func init() {
 type Provider struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Endpoint string `json:"endpoint,omitempty"`
 
 	client *http.Client
+	logger *zap.Logger
 }
 
 var (
 	_ libdns.RecordAppender = (*Provider)(nil)
 	_ libdns.RecordDeleter  = (*Provider)(nil)
-	_ caddy.Validator      = (*Provider)(nil)
+	_ caddyfile.Unmarshaler = (*Provider)(nil)
+	_ caddy.Provisioner     = (*Provider)(nil)
 )
 
 // CaddyModule returns module info.
@@ -43,46 +44,78 @@ func (Provider) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Validate ensures the provider is configured correctly.
-func (p *Provider) Validate() error {
-	if p.Username == "" || p.Password == "" {
-		return errors.New("joker: username and password are required")
+// Provision sets up the HTTP client and logger.
+func (p *Provider) Provision(ctx caddy.Context) error {
+	p.client = &http.Client{
+		Timeout: 30 * time.Second,
 	}
+	p.logger = ctx.Logger().Named("dns.joker")
 	return nil
 }
 
-func (p *Provider) httpClient() *http.Client {
-	if p.client == nil {
-		p.client = &http.Client{
-			Timeout: 15 * time.Second,
+// UnmarshalCaddyfile parses the Caddyfile block:
+//
+// dns joker {
+//     username ...
+//     password ...
+// }
+func (p *Provider) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for d.Next() {
+		for d.NextBlock() {
+			switch d.Val() {
+			case "username":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				p.Username = d.Val()
+
+			case "password":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				p.Password = d.Val()
+
+			default:
+				return d.Errf("unrecognized directive %q", d.Val())
+			}
 		}
 	}
-	return p.client
-}
 
-func (p *Provider) endpoint() string {
-	if p.Endpoint != "" {
-		return p.Endpoint
+	if p.Username == "" || p.Password == "" {
+		return d.Err("both username and password are required")
 	}
-	return defaultEndpoint
+
+	return nil
 }
 
 // AppendRecords adds DNS records via Joker /nic/replace
-func (p *Provider) AppendRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
+func (p *Provider) AppendRecords(
+	ctx context.Context,
+	zone string,
+	records []libdns.Record,
+) ([]libdns.Record, error) {
+
 	var added []libdns.Record
 
 	for _, rec := range records {
 		rr := rec.RR()
-		value := rr.Data
 
-		// Joker TXT records must not be quoted
-		if rr.Type == "TXT" {
-			value = strings.Trim(value, `"`)
-		}
+		p.logger.Debug("adding DNS record",
+			zap.String("zone", zone),
+			zap.String("name", rr.Name),
+			zap.String("type", rr.Type),
+		)
 
-		if err := p.replaceRecord(ctx, rr.Name, rr.Type, value, int(rr.TTL.Seconds())); err != nil {
+		if err := p.replaceRecord(
+			ctx,
+			rr.Name,
+			rr.Type,
+			rr.Data,
+			int(rr.TTL.Seconds()),
+		); err != nil {
 			return added, err
 		}
+
 		added = append(added, rec)
 	}
 
@@ -90,23 +123,47 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 }
 
 // DeleteRecords deletes DNS records via Joker /nic/replace
-func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
+func (p *Provider) DeleteRecords(
+	ctx context.Context,
+	zone string,
+	records []libdns.Record,
+) ([]libdns.Record, error) {
+
 	var deleted []libdns.Record
 
 	for _, rec := range records {
 		rr := rec.RR()
 
-		// Joker "delete" is implemented as replace with empty address
-		if err := p.replaceRecord(ctx, rr.Name, rr.Type, "", int(rr.TTL.Seconds())); err != nil {
+		p.logger.Debug("deleting DNS record",
+			zap.String("zone", zone),
+			zap.String("name", rr.Name),
+			zap.String("type", rr.Type),
+		)
+
+		if err := p.replaceRecord(
+			ctx,
+			rr.Name,
+			rr.Type,
+			"",
+			int(rr.TTL.Seconds()),
+		); err != nil {
 			return deleted, err
 		}
+
 		deleted = append(deleted, rec)
 	}
 
 	return deleted, nil
 }
 
-func (p *Provider) replaceRecord(ctx context.Context, name, rtype, value string, ttl int) error {
+// replaceRecord calls Joker's /nic/replace endpoint.
+// An empty value deletes the record.
+func (p *Provider) replaceRecord(
+	ctx context.Context,
+	name, rtype, value string,
+	ttl int,
+) error {
+
 	form := url.Values{}
 	form.Set("username", p.Username)
 	form.Set("password", p.Password)
@@ -118,7 +175,7 @@ func (p *Provider) replaceRecord(ctx context.Context, name, rtype, value string,
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		p.endpoint(),
+		"https://svc.joker.com/nic/replace",
 		strings.NewReader(form.Encode()),
 	)
 	if err != nil {
@@ -127,7 +184,7 @@ func (p *Provider) replaceRecord(ctx context.Context, name, rtype, value string,
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := p.httpClient().Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -135,7 +192,17 @@ func (p *Provider) replaceRecord(ctx context.Context, name, rtype, value string,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("joker API error: %s: %s", resp.Status, string(body))
+
+		p.logger.Error("joker API error",
+			zap.Int("status", resp.StatusCode),
+			zap.ByteString("response", body),
+		)
+
+		return fmt.Errorf(
+			"joker API error: status=%d response=%s",
+			resp.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
 	}
 
 	return nil
