@@ -16,14 +16,21 @@ import (
 	"github.com/libdns/libdns"
 )
 
+const defaultEndpoint = "https://svc.joker.com/nic/replace"
+
 func init() {
 	caddy.RegisterModule(Provider{})
 }
 
 // Provider implements libdns interfaces for Joker DNS
 type Provider struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	// Authentication (exactly one method required)
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	APIToken string `json:"api_token,omitempty"`
+
+	// Optional override
+	Endpoint string `json:"endpoint,omitempty"`
 
 	client *http.Client
 	logger *zap.Logger
@@ -44,12 +51,31 @@ func (Provider) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision sets up the HTTP client and logger.
+// Provision validates config and sets up client + logger.
 func (p *Provider) Provision(ctx caddy.Context) error {
 	p.client = &http.Client{
 		Timeout: 30 * time.Second,
 	}
 	p.logger = ctx.Logger().Named("dns.joker")
+
+	if p.Endpoint == "" {
+		p.Endpoint = defaultEndpoint
+	}
+
+	hasUserPass := p.Username != "" || p.Password != ""
+	hasToken := p.APIToken != ""
+
+	switch {
+	case hasToken && hasUserPass:
+		return fmt.Errorf("configure either api_token or username/password, not both")
+	case hasToken:
+		// ok
+	case p.Username != "" && p.Password != "":
+		// ok
+	default:
+		return fmt.Errorf("either api_token or username/password must be configured")
+	}
+
 	return nil
 }
 
@@ -58,6 +84,8 @@ func (p *Provider) Provision(ctx caddy.Context) error {
 // dns joker {
 //     username ...
 //     password ...
+//     api_token ...
+//     endpoint ...
 // }
 func (p *Provider) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
@@ -75,14 +103,22 @@ func (p *Provider) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				}
 				p.Password = d.Val()
 
+			case "api_token":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				p.APIToken = d.Val()
+
+			case "endpoint":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				p.Endpoint = d.Val()
+
 			default:
 				return d.Errf("unrecognized directive %q", d.Val())
 			}
 		}
-	}
-
-	if p.Username == "" || p.Password == "" {
-		return d.Err("both username and password are required")
 	}
 
 	return nil
@@ -100,6 +136,11 @@ func (p *Provider) AppendRecords(
 	for _, rec := range records {
 		rr := rec.RR()
 
+		value := rr.Data
+		if rr.Type == "TXT" {
+			value = normalizeTXT(value)
+		}
+
 		p.logger.Debug("adding DNS record",
 			zap.String("zone", zone),
 			zap.String("name", rr.Name),
@@ -110,7 +151,7 @@ func (p *Provider) AppendRecords(
 			ctx,
 			rr.Name,
 			rr.Type,
-			rr.Data,
+			value,
 			int(rr.TTL.Seconds()),
 		); err != nil {
 			return added, err
@@ -165,17 +206,22 @@ func (p *Provider) replaceRecord(
 ) error {
 
 	form := url.Values{}
-	form.Set("username", p.Username)
-	form.Set("password", p.Password)
 	form.Set("hostname", name)
 	form.Set("type", rtype)
 	form.Set("address", value)
 	form.Set("ttl", fmt.Sprintf("%d", ttl))
 
+	if p.APIToken != "" {
+		form.Set("api_token", p.APIToken)
+	} else {
+		form.Set("username", p.Username)
+		form.Set("password", p.Password)
+	}
+
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://svc.joker.com/nic/replace",
+		p.Endpoint,
 		strings.NewReader(form.Encode()),
 	)
 	if err != nil {
@@ -206,4 +252,12 @@ func (p *Provider) replaceRecord(
 	}
 
 	return nil
+}
+
+// normalizeTXT removes surrounding quotes from TXT values if present.
+func normalizeTXT(v string) string {
+	if len(v) >= 2 && strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) {
+		return strings.Trim(v, `"`)
+	}
+	return v
 }
