@@ -93,7 +93,7 @@ https://svc.joker.com/nic/replace
 
 ## Environment Variables
 
-It is **strongly recommended** to provide credentials via environment variables:
+It is **commonly recommended** to provide credentials via environment variables like this, but I'm not convinced that `/proc/*/environ` is safer than a config file.
 
 ```bash
 export JOKER_API_TOKEN=your_token_here
