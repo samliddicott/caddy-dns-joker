@@ -154,6 +154,7 @@ Sensitive credentials are **never logged**.
 - The plugin follows patterns used by official `caddy-dns-*` providers
 - HTTP requests are context-aware for clean cancellation
 - TXT record values are normalized to avoid quoting issues during ACME challenges
+⚠️ Joker’s API replaces entire record sets. This provider batches records per label/type and performs a single update to avoid data loss.
 
 ---
 

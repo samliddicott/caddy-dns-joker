@@ -7,14 +7,21 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"strconv"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"go.uber.org/zap"
 
 	"github.com/libdns/libdns"
 )
+
+type rrsetKey struct {
+    zone  string
+    label string
+    rtype string
+}
 
 const defaultEndpoint = "https://svc.joker.com/nic/replace"
 
@@ -62,7 +69,7 @@ func (p *Provider) Provision(ctx caddy.Context) error {
 		p.Endpoint = defaultEndpoint
 	}
 
-	hasUserPass := p.Username != "" || p.Password != ""
+	hasUserPass := p.Username != "" && p.Password != ""
 	hasToken := p.APIToken != ""
 
 	switch {
@@ -89,7 +96,7 @@ func (p *Provider) Provision(ctx caddy.Context) error {
 // }
 func (p *Provider) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
-		for d.NextBlock() {
+		for d.NextBlock(0) {
 			switch d.Val() {
 			case "username":
 				if !d.NextArg() {
@@ -131,33 +138,51 @@ func (p *Provider) AppendRecords(
 	records []libdns.Record,
 ) ([]libdns.Record, error) {
 
-	var added []libdns.Record
+	grouped := make(map[rrsetKey][]libdns.Record)
+	z := normalizeZone(zone)
 
 	for _, rec := range records {
 		rr := rec.RR()
+		key := rrsetKey{
+			zone:  z,
+			label: labelRelativeToZone(rr.Name, z),
+			rtype: rr.Type,
+		}
+		grouped[key] = append(grouped[key], rec)
+	}
 
-		value := rr.Data
-		if rr.Type == "TXT" {
-			value = normalizeTXT(value)
+	var added []libdns.Record
+
+	for key, recs := range grouped {
+		var values []string
+		ttl := minTTL(recs)
+
+		for _, rec := range recs {
+			v := rec.RR().Data
+			if key.rtype == "TXT" {
+				v = normalizeTXT(v)
+			}
+			values = append(values, v)
 		}
 
 		p.logger.Debug("adding DNS record",
-			zap.String("zone", zone),
-			zap.String("name", rr.Name),
-			zap.String("type", rr.Type),
+			zap.String("zone", key.zone),
+			zap.String("label", key.label),
+			zap.String("type", key.rtype),
 		)
 
-		if err := p.replaceRecord(
+		if err := p.replaceRRSet(
 			ctx,
-			rr.Name,
-			rr.Type,
-			value,
-			int(rr.TTL.Seconds()),
+			key.zone,
+			key.label,
+			key.rtype,
+			values,
+			ttl,
 		); err != nil {
 			return added, err
 		}
 
-		added = append(added, rec)
+		added = append(added, recs...)
 	}
 
 	return added, nil
@@ -170,53 +195,93 @@ func (p *Provider) DeleteRecords(
 	records []libdns.Record,
 ) ([]libdns.Record, error) {
 
-	var deleted []libdns.Record
+	grouped := make(map[rrsetKey][]libdns.Record)
+	z := normalizeZone(zone)
 
 	for _, rec := range records {
 		rr := rec.RR()
+		key := rrsetKey{
+			zone:  z,
+			label: labelRelativeToZone(rr.Name, z),
+			rtype: rr.Type,
+		}
+		grouped[key] = append(grouped[key], rec)
+	}
+
+	var deleted []libdns.Record
+
+	for key, recs := range grouped {
+		ttl := minTTL(recs)
 
 		p.logger.Debug("deleting DNS record",
-			zap.String("zone", zone),
-			zap.String("name", rr.Name),
-			zap.String("type", rr.Type),
+			zap.String("zone", key.zone),
+			zap.String("label", key.label),
+			zap.String("type", key.rtype),
 		)
 
-		if err := p.replaceRecord(
+		// Empty value list = delete entire RRset
+		if err := p.replaceRRSet(
 			ctx,
-			rr.Name,
-			rr.Type,
-			"",
-			int(rr.TTL.Seconds()),
+			key.zone,
+			key.label,
+			key.rtype,
+			nil,
+			ttl,
 		); err != nil {
 			return deleted, err
 		}
 
-		deleted = append(deleted, rec)
+		deleted = append(deleted, recs...)
 	}
 
 	return deleted, nil
 }
 
-// replaceRecord calls Joker's /nic/replace endpoint.
+// replaceRRSet calls Joker's /nic/replace endpoint.
 // An empty value deletes the record.
-func (p *Provider) replaceRecord(
+func (p *Provider) replaceRRSet(
 	ctx context.Context,
-	name, rtype, value string,
+	zone, label, rtype string,
+	values []string,
 	ttl int,
 ) error {
+	zone = normalizeZone(zone)
+	label = strings.TrimSuffix(label, ".")
+
+	// Clamp TTL to Joker's documented range (and your requirement)
+	if ttl < 60 {
+		ttl = 60
+	} else if ttl > 86400 {
+		ttl = 86400
+	}
 
 	form := url.Values{}
-	form.Set("hostname", name)
-	form.Set("type", rtype)
-	form.Set("address", value)
-	form.Set("ttl", fmt.Sprintf("%d", ttl))
-
 	if p.APIToken != "" {
 		form.Set("api_token", p.APIToken)
 	} else {
 		form.Set("username", p.Username)
 		form.Set("password", p.Password)
 	}
+
+	form.Set("zone", zone)
+	form.Set("label", label)
+	form.Set("type", rtype)
+	form.Set("ttl", strconv.Itoa(ttl))
+
+	if len(values) > 0 {
+		form.Set("value", strings.Join(values, ","))
+	} else {
+		form.Set("value", "")
+	}
+
+	// Safe debug logging (no secrets)
+	p.logFormRedacted(form)
+
+       encoded := form.Encode()
+       p.logger.Debug("joker request body",
+               zap.String("body", encoded),
+       )
+
 
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -227,7 +292,6 @@ func (p *Provider) replaceRecord(
 	if err != nil {
 		return err
 	}
-
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := p.client.Do(req)
@@ -238,12 +302,10 @@ func (p *Provider) replaceRecord(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-
 		p.logger.Error("joker API error",
 			zap.Int("status", resp.StatusCode),
 			zap.ByteString("response", body),
 		)
-
 		return fmt.Errorf(
 			"joker API error: status=%d response=%s",
 			resp.StatusCode,
@@ -261,3 +323,56 @@ func normalizeTXT(v string) string {
 	}
 	return v
 }
+
+// Select the minimum TTL of all records, as with joker single update they
+// must share one TTL, but ensure it is within the joker permitted range
+func minTTL(records []libdns.Record) int {
+	if len(records) == 0 {
+		return 60
+	}
+
+	min := int(records[0].RR().TTL.Seconds())
+	for _, r := range records[1:] {
+		if t := int(r.RR().TTL.Seconds()); t < min {
+			min = t
+		}
+	}
+
+	if min < 60 {
+		min = 60
+	} else if min > 86400 {
+		min = 86400
+	}
+	return min
+}
+
+func normalizeZone(z string) string {
+    return strings.TrimSuffix(z, ".")
+}
+
+func labelRelativeToZone(name, zone string) string {
+	name = strings.TrimSuffix(name, ".")
+	zone = strings.TrimSuffix(zone, ".")
+
+	// If already relative (no zone suffix), keep it as-is.
+	// If it ends with ".<zone>", strip that suffix.
+	suffix := "." + zone
+	if strings.HasSuffix(name, suffix) {
+		name = strings.TrimSuffix(name, suffix)
+	}
+	return strings.TrimSuffix(name, ".")
+}
+
+func (p *Provider) logFormRedacted(form url.Values) {
+	redacted := url.Values{}
+	for k, v := range form {
+		switch k {
+		case "password", "api_token":
+			redacted.Set(k, "<redacted>")
+		default:
+			redacted[k] = v
+		}
+	}
+	p.logger.Debug("joker request form", zap.Any("form", redacted))
+}
+
