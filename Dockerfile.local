@@ -1,0 +1,39 @@
+# Dockerfile.local — Build Caddy with local plugin
+
+# Stage 1: Builder
+FROM caddy:builder AS builder
+
+WORKDIR /build
+
+# Copy only go.mod/go.sum first for caching
+COPY go.mod go.sum ./
+# Download dependencies first (cached unless go.mod/go.sum changes)
+RUN go mod download
+
+# Now copy the full plugin source
+COPY . .
+
+# Build Caddy with the local plugin
+RUN set -eux; \
+    xcaddy build v2.10.2 \
+      --with github.com/samliddicott/caddy-dns-joker=/build \
+      --output /usr/bin/caddy
+
+# Stage 2: Runtime
+FROM caddy:2.10.2
+
+# Copy custom Caddy binary
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+
+# Expose standard HTTP/S ports
+EXPOSE 80 443
+
+# Environment variables for Joker DNS credentials
+ENV JOKER_USERNAME=""
+ENV JOKER_PASSWORD=""
+
+# Copy default Caddyfile (adjust path as needed)
+COPY Caddyfile /etc/caddy/Caddyfile
+
+# Run Caddy
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
