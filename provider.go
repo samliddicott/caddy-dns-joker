@@ -41,6 +41,7 @@ type Provider struct {
 
 	client *http.Client
 	logger *zap.Logger
+	expanded bool
 }
 
 var (
@@ -60,6 +61,14 @@ func (Provider) CaddyModule() caddy.ModuleInfo {
 
 // Provision validates config and sets up client + logger.
 func (p *Provider) Provision(ctx caddy.Context) error {
+	if !p.expanded {
+		repl := caddy.NewReplacer()
+		p.Username = repl.ReplaceAll(p.Username, "")
+		p.Password = repl.ReplaceAll(p.Password, "")
+		p.APIToken = repl.ReplaceAll(p.APIToken, "")
+		p.Endpoint = repl.ReplaceAll(p.Endpoint, "")
+		p.expanded = true
+	}
 	p.client = &http.Client{
 		Timeout: 30 * time.Second,
 	}
