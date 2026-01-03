@@ -1,0 +1,28 @@
+# VCS
+.git
+.gitignore
+
+# Docs and misc
+*.md
+LICENSE
+NOTICE
+
+# Local dev / artifacts
+*.log
+*.tmp
+tmp/
+data/
+dist/
+bin/
+
+# Docker files (changing these shouldn't trigger rebuild of builder stage)
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+
+# Caddy runtime config (keep it out of builder context)
+#Caddyfile
+#caddy.json
+
+# OS junk
+.DS_Store

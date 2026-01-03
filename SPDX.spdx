@@ -1,0 +1,25 @@
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentName: caddy-dns-joker-sbom
+DocumentNamespace: https://github.com/samliddicott/caddy-dns-joker/spdx/SPDXRef-DOCUMENT-2026-01-03T00:00:00Z
+Creator: Person: Sam Liddicott (sam@liddicott.com)
+Creator: Tool: ChatGPT instance Fred (assistance)
+Created: 2026-01-03T00:00:00Z
+LicenseListVersion: 3.25
+
+DocumentComment: SPDX SBOM for the caddy-dns-joker repository. Portions of the implementation and documentation were produced with assistance from an OpenAI ChatGPT instance under direction of the maintainer. This comment is informational and does not affect licensing.
+
+##### Package #####
+
+PackageName: caddy-dns-joker
+SPDXID: SPDXRef-Package-caddy-dns-joker
+PackageVersion: 0.0.0
+PackageSupplier: Person: Sam Liddicott (sam@liddicott.com)
+PackageDownloadLocation: https://github.com/samliddicott/caddy-dns-joker
+PackageLicenseConcluded: Apache-2.0
+PackageLicenseDeclared: Apache-2.0
+PackageCopyrightText: Copyright 2026 Sam Liddicott
+PackageSummary: Caddy DNS provider module for Joker.com to support ACME DNS-01 challenges.
+
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-Package-caddy-dns-joker

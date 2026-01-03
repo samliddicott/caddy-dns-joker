@@ -1,0 +1,15 @@
+{
+    email you@example.com
+}
+
+example.com {
+    tls {
+        dns joker {
+#            api_token "{env.JOKER_API_TOKEN}"
+            username "{env.JOKER_USERNAME}"
+            password "{env.JOKER_PASSWORD}"
+        }
+    }
+
+    respond "Hello from Caddy + Joker DNS!"
+}

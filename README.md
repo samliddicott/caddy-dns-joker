@@ -156,6 +156,21 @@ Sensitive credentials are **never logged**.
 - TXT record values are normalized to avoid quoting issues during ACME challenges
 - ⚠️ Joker’s API replaces entire record sets. This provider batches records per label/type and performs a single update to avoid data loss.
 
+### Building with Docker
+
+Use Dockerfile.local to build from the github checkout:
+
+```bash
+docker buildx build -f Dockerfile.local -t caddy-dns-joker:local .
+```
+
+Use Dockerfile to build stand-alone from git:
+
+```bash
+docker buildx build --platform linux/amd64 -t caddy-joker:git .
+```
+
+If you want to include other modules, just edit the Dockerfile to add `--with <modulename>` as is normal for xcaddy
 ---
 
 ## Acknowledgements
@@ -176,7 +191,7 @@ Final design decisions, testing, and validation were performed by the author.
 
 ## License
 
-MIT License
+Apache-2.0 License
 
 ---
 

@@ -1,0 +1,53 @@
+# --- Go build outputs ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+*.test
+*.out
+
+# Binaries / build dirs
+bin/
+dist/
+build/
+tmp/
+out/
+
+# Go workspace / module cache (rarely committed)
+go.work
+go.work.sum
+
+# Coverage / profiling
+coverage.*
+*.cover
+*.cov
+*.prof
+*.pprof
+
+# --- Caddy runtime data (you usually don't want these in git) ---
+data/
+caddy_data/
+Caddyfile.local
+caddy.json
+access.log
+*.log
+
+# --- Docker / Compose (keep Dockerfile(s), ignore local overrides) ---
+docker-compose.override.yml
+.env
+*.env
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Git tooling ---
+*.orig
+*.rej
