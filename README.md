@@ -128,10 +128,10 @@ docker buildx build \
 
 ## Local Docker build (with sibling libdns repo)
 
-If you have both repos checked out under `~/Projects/caddy`:
+If you have both repos checked out under a common parent directory:
 
 ```
-/home/sam/Projects/caddy/
+<parent>/
   ├─ libdns/joker
   └─ caddy-dns/joker
 ```
@@ -139,10 +139,17 @@ If you have both repos checked out under `~/Projects/caddy`:
 Run:
 
 ```bash
-docker build -f caddy-dns/joker/Dockerfile.local /home/sam/Projects/caddy
+docker build -t caddy-joker:local -f caddy-dns/joker/Dockerfile.local <parent>
 ```
 
 This uses the local libdns provider without needing it published.
+
+If Docker runs on a remote host, make sure the build context path is valid on
+that host, for example:
+
+```bash
+docker build -t caddy-joker:local -f /share/homes/user/Projects/caddy/caddy-dns/joker/Dockerfile.local /share/homes/user/Projects/caddy
+```
 
 ---
 

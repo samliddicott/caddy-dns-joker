@@ -5,7 +5,7 @@ go 1.25
 require (
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/libdns/libdns v1.1.0
-	github.com/samliddicott/libdns-joker v0.0.0
+	github.com/samliddicott/libdns-joker v0.0.1
 	go.uber.org/zap v1.27.0
 )
 
