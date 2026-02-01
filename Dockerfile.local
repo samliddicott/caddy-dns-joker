@@ -1,17 +1,28 @@
-# Dockerfile.local — Build Caddy with local plugin
+# Dockerfile.local — Build Caddy with local plugin and local libdns repo
+#
+# Build context should be the parent folder that contains both:
+#   - caddy-dns/joker
+#   - libdns/joker
+#
+# Example:
+#   docker build -f caddy-dns/joker/Dockerfile.local /home/sam/Projects/caddy
 
-# Stage 1: Builder
 FROM caddy:builder AS builder
 
 WORKDIR /build
 
 # Copy only go.mod/go.sum first for caching
-COPY go.mod go.sum ./
+COPY caddy-dns/joker/go.mod caddy-dns/joker/go.sum ./
+
+# Copy the local libdns provider and replace module path
+COPY libdns/joker /libdns-joker
+RUN go mod edit -replace github.com/samliddicott/libdns-joker=/libdns-joker
+
 # Download dependencies first (cached unless go.mod/go.sum changes)
 RUN go mod download
 
-# Now copy the full plugin source
-COPY . .
+# Copy the plugin source
+COPY caddy-dns/joker ./
 
 # Build Caddy with the local plugin
 RUN set -eux; \
@@ -19,7 +30,6 @@ RUN set -eux; \
       --with github.com/samliddicott/caddy-dns-joker=/build \
       --output /usr/bin/caddy
 
-# Stage 2: Runtime
 FROM caddy:2.10.2
 
 # Copy custom Caddy binary
@@ -32,8 +42,8 @@ EXPOSE 80 443
 ENV JOKER_USERNAME=""
 ENV JOKER_PASSWORD=""
 
-# Copy default Caddyfile (adjust path as needed)
-COPY Caddyfile /etc/caddy/Caddyfile
+# Copy default Caddyfile
+COPY caddy-dns/joker/Caddyfile /etc/caddy/Caddyfile
 
 # Run Caddy
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

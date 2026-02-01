@@ -1,8 +1,8 @@
 # caddy-dns-joker
 
-A **Caddy DNS provider plugin** for the [Joker.com](https://joker.com) DNS API, enabling **DNS-01 ACME challenges** (e.g. Let’s Encrypt) via Joker-managed domains.
+A **Caddy DNS provider module** for the [Joker.com](https://joker.com) DNS API, enabling **DNS-01 ACME challenges** via Joker-managed domains.
 
-This plugin implements the [`libdns`](https://github.com/libdns/libdns) interfaces and integrates cleanly with Caddy v2 and CertMagic.
+This module wraps the pure libdns provider from [`libdns-joker`](https://github.com/samliddicott/libdns-joker) and integrates with Caddy v2 / CertMagic.
 
 ---
 
@@ -29,8 +29,8 @@ This plugin implements the [`libdns`](https://github.com/libdns/libdns) interfac
 
 ## Installation
 
-This plugin is **not bundled with Caddy by default**.  
-You must build Caddy with the plugin included.
+This module is **not bundled with Caddy by default**.  
+You must build Caddy with the module included.
 
 ### Using `xcaddy` (recommended)
 
@@ -93,8 +93,6 @@ https://svc.joker.com/nic/replace
 
 ## Environment Variables
 
-It is **commonly recommended** to provide credentials via environment variables like this, but I'm not convinced that `/proc/*/environ` is safer than a config file.
-
 ```bash
 export JOKER_API_TOKEN=your_token_here
 ```
@@ -110,7 +108,7 @@ export JOKER_PASSWORD=your_password
 
 ## Docker / Multi-Arch Builds
 
-This plugin is compatible with Caddy builds created using:
+This module is compatible with Caddy builds created using:
 
 - `xcaddy`
 - Docker + `caddy:builder`
@@ -126,7 +124,25 @@ docker buildx build \
   .
 ```
 
-Then pull and run on your target system (e.g. QNAP, ARM SBCs, VPS).
+---
+
+## Local Docker build (with sibling libdns repo)
+
+If you have both repos checked out under `~/Projects/caddy`:
+
+```
+/home/sam/Projects/caddy/
+  ├─ libdns/joker
+  └─ caddy-dns/joker
+```
+
+Run:
+
+```bash
+docker build -f caddy-dns/joker/Dockerfile.local /home/sam/Projects/caddy
+```
+
+This uses the local libdns provider without needing it published.
 
 ---
 
@@ -140,52 +156,14 @@ Example log namespace:
 dns.joker
 ```
 
-Errors returned by the Joker API include:
-
-- HTTP status
-- Response body (when available)
-
 Sensitive credentials are **never logged**.
 
----
-
-## Development Notes
-
-- The plugin follows patterns used by official `caddy-dns-*` providers
-- HTTP requests are context-aware for clean cancellation
-- TXT record values are normalized to avoid quoting issues during ACME challenges
-- ⚠️ Joker’s API replaces entire record sets. This provider batches records per label/type and performs a single update to avoid data loss.
-
-### Building with Docker
-
-Use Dockerfile.local to build from the github checkout:
-
-```bash
-docker buildx build -f Dockerfile.local -t caddy-dns-joker:local .
-```
-
-Use Dockerfile to build stand-alone from git:
-
-```bash
-docker buildx build --platform linux/amd64 -t caddy-joker:git .
-```
-
-If you want to include other modules, just edit the Dockerfile to add `--with <modulename>` as is normal for xcaddy
 ---
 
 ## Acknowledgements
 
 This plugin was developed by **Sam Liddicott**,  
 with design review, iteration, and implementation assistance from **ChatGPT instance Fred**.
-
-ChatGPT instance Fred assisted with:
-
-- Code structure and API design
-- Caddy/libdns integration patterns
-- Error handling and logging practices
-- Docker and build workflows
-
-Final design decisions, testing, and validation were performed by the author.
 
 ---
 
@@ -197,5 +175,4 @@ Apache-2.0 License
 
 ## Disclaimer
 
-This project is **not affiliated with or endorsed by Joker.com**.  
-Use at your own risk.
+This project is **not affiliated with or endorsed by Joker.com**.
